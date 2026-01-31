@@ -1,51 +1,50 @@
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
-import json
+import csv
+import os
 
-# رابط الـ Web App الخاص بجدول جوجل (الذي حصلت عليه من Apps Script)
-SHEET_API_URL = "ضع_رابط_الـ_WEB_APP_هنا"
-
-def scrape_3sk(url):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+def scrape_to_csv(url):
+    # استخدام scraper لتجاوز الحماية
+    scraper = cloudscraper.create_scraper()
+    
     try:
-        response = requests.get(url, headers=headers)
+        response = scraper.get(url)
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # 1. جلب اسم المسلسل والحلقة
-        title = soup.find('h1').text.strip() if soup.find('h1') else "مسلسل تركي"
-
-        # 2. جلب روابط الجودات (SD, HD, FHD)
-        # الموقع يضع الروابط في أزرار أو داخل المشغل
-        links = {"FHD": "", "HD": "", "SD": ""}
+        # 1. استخراج الاسم (تنظيفه ليكون احترافياً)
+        title = soup.find('h1').text.strip() if soup.find('h1') else "Unknown Series"
         
-        # البحث عن أزرار المشاهدة
-        sources = soup.find_all('source') or soup.find_all('a', href=True)
-        
-        for item in sources:
-            href = item.get('href') or item.get('src')
-            if href:
-                if "1080" in href or "fhd" in href.lower(): links["FHD"] = href
-                elif "720" in href or "hd" in href.lower(): links["HD"] = href
-                elif "480" in href or "sd" in href.lower(): links["SD"] = href
+        # 2. استخراج رابط المشاهدة (الجودة الأعلى المتوفرة)
+        watch_link = ""
+        # البحث عن سيرفرات المشاهدة
+        iframe = soup.find('iframe')
+        if iframe:
+            watch_link = iframe.get('src', '')
 
-        # إذا لم يجد روابط مباشرة، سيأخذ رابط المشاهدة الأساسي
-        if not links["HD"]:
-            iframe = soup.find('iframe')
-            if iframe: links["HD"] = iframe['src']
+        if not watch_link:
+            # محاولة البحث في الأزرار إذا لم يوجد iframe
+            for a in soup.find_all('a', href=True):
+                if "watch" in a['href'] or "video" in a['href']:
+                    watch_link = a['href']
+                    break
 
-        # 3. إرسال البيانات إلى Google Sheets
-        payload = {
-            "name": title,
-            "fhd": links["FHD"],
-            "hd": links["HD"],
-            "sd": links["SD"]
-        }
+        # 3. حفظ البيانات في ملف CSV بترتيب (اسم، رابط)
+        file_exists = os.path.isfile('database.csv')
         
-        requests.post(SHEET_API_URL, json=payload)
-        print(f"✅ تم بنجاح: {title}")
+        with open('database.csv', mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            # إذا كان الملف جديداً، أضف العناوين (Headers)
+            if not file_exists:
+                writer.writerow(['name', 'url'])
+            
+            # إضافة السطر الجديد
+            writer.writerow([title, watch_link])
+            
+        print(f"✅ تم بنجاح إضافة: {title}")
 
     except Exception as e:
         print(f"❌ خطأ: {e}")
 
-# تشغيل السكربت على الرابط الذي أعطيتني إياه
-scrape_3sk("https://k.3sk.media/o5p4/")
+# الرابط المستهدف
+target_url = "https://k.3sk.media/o5p4/"
+scrape_to_csv(target_url)
