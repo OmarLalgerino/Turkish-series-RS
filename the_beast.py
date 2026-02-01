@@ -1,81 +1,68 @@
-import feedparser
-import csv
 import requests
 import re
-import cloudscraper
-import os
+import csv
 
-# مصادر الأنمي المترجم للعربية
-SOURCES = [
-    "https://nyaa.si/?page=rss&q=Arabic+1080p",
-    "https://nyaa.si/?page=rss&q=Arabic+720p",
-    "https://nyaa.si/?page=rss&q=Arabic+480p",
-    "https://www.tokyotosho.info/rss.php?filter=1,11&z=Arabic"
-]
-
-DB_FILE = 'database.csv'
-
-def translate_to_arabic_only(text):
-    """تنظيف الاسم من الشوائب الإنجليزية وترجمته"""
-    # حذف الكلمات التقنية والرموز
-    clean_text = re.sub(r'\[.*?\]|\(.*?\)|1080p|720p|480p|HEVC|x264|x265|AAC|Vostfr|Multi', '', text).strip()
+def test_link(url):
+    """يختبر إذا كان الرابط يعمل ويعيد True أو False"""
     try:
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ar&dt=t&q={requests.utils.quote(clean_text)}"
-        res = requests.get(url, timeout=5)
-        return res.json()[0][0][0]
+        # نرسل طلب "HEAD" بدلاً من "GET" ليكون الفحص سريعاً جداً ولا يستهلك بيانات
+        response = requests.head(url, timeout=5, allow_redirects=True)
+        return response.status_code == 200
     except:
-        return clean_text
+        return False
 
-def get_clean_hash_link(entry):
-    """استخراج رابط المشغل المباشر"""
-    if hasattr(entry, 'nyaa_infohash'):
-        return f"https://webtor.io/player/embed/{entry.nyaa_infohash}"
-    link = getattr(entry, 'link', '')
-    hash_match = re.search(r'btih:([a-fA-F0-9]{40})', link)
-    if hash_match:
-        return f"https://webtor.io/player/embed/{hash_match.group(1).lower()}"
-    return None
-
-def start_bot():
-    scraper = cloudscraper.create_scraper()
-    print("🧹 تنظيف القائمة القديمة وجلب أحدث الحلقات...")
-
-    # نستخدم dictionary لمنع التكرار (الاسم هو المفتاح)
-    fresh_database = {}
-
-    for rss_url in SOURCES:
-        try:
-            resp = scraper.get(rss_url, timeout=15)
-            feed = feedparser.parse(resp.text)
-            
-            # نأخذ أول 15 حلقة فقط من كل مصدر لضمان أنها "جديدة جداً"
-            for entry in feed.entries[:15]:
-                link = get_clean_hash_link(entry)
-                if link:
-                    arabic_title = translate_to_arabic_only(entry.title)
-                    
-                    # جودة الفيديو بالعربي
-                    if "1080p" in entry.title: q = "1080p - FHD"
-                    elif "720p" in entry.title: q = "720p - HD"
-                    else: q = "480p - SD"
-                    
-                    # حفظ بأسماء أعمدة عربية
-                    fresh_database[entry.title] = {
-                        'اسم_الأنمي': arabic_title,
-                        'رابط_المشاهدة': link,
-                        'الجودة': q
-                    }
-        except:
-            continue
-
-    # حفظ الملف بوضعية 'w' لمسح القديم ووضع الجديد لضمان عمل الروابط
-    with open(DB_FILE, 'w', newline='', encoding='utf-8') as f:
-        columns = ['اسم_الأنمي', 'رابط_المشاهدة', 'الجودة']
-        writer = csv.DictWriter(f, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(fresh_database.values())
+def fetch_and_filter():
+    # مصدر القنوات (مثال: قنوات عربية)
+    source_url = "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/ar.m3u"
     
-    print(f"✅ تم تحديث المكتبة بـ {len(fresh_database)} حلقة جديدة تعمل الآن!")
+    print("جاري جلب قائمة القنوات...")
+    response = requests.get(source_url)
+    if response.status_code != 200:
+        return []
 
+    # استخراج الاسم والرابط
+    pattern = r'#EXTINF:.*?,(.*?)\n(http.*?\.m3u8)'
+    matches = re.findall(pattern, response.text)
+    
+    valid_channels = []
+    count = 0
+    max_channels = 50  # حددنا 50 قناة فقط لأن الفحص يأخذ وقتاً
+
+    print(f"تم العثور على {len(matches)} قناة. يبدأ الفحص الآن...")
+
+    for name, url in matches:
+        if count >= max_channels:
+            break
+        
+        clean_url = url.strip()
+        # اختبار الرابط قبل إضافته
+        if test_link(clean_url):
+            print(f"✅ تعمل: {name.strip()}")
+            valid_channels.append({
+                'id': count + 1,
+                'title': name.strip(),
+                'image': 'https://via.placeholder.com/150?text=TV',
+                'url': clean_url
+            })
+            count += 1
+        else:
+            print(f"❌ معطلة: {name.strip()}")
+
+    return valid_channels
+
+def save_to_csv(channels):
+    if not channels:
+        print("لا توجد قنوات صالحة للإضافة.")
+        return
+    
+    keys = ['id', 'title', 'image', 'url']
+    with open('database.csv', 'w', newline='', encoding='utf-8') as f:
+        dict_writer = csv.DictWriter(f, fieldnames=keys)
+        dict_writer.writeheader()
+        dict_writer.writerows(channels)
+    print(f"✅ تم تحديث الجدول بـ {len(channels)} قناة شغالّة!")
+
+# تشغيل البوت
 if __name__ == "__main__":
-    start_bot()
+    live_data = fetch_and_filter()
+    save_to_csv(live_data)
