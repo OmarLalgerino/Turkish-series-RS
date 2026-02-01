@@ -1,52 +1,50 @@
 import requests
 import re
 import csv
-import os
 
-# مصادر البحث (مستودعات تحدث روابطها باستمرار)
+# قائمة المصادر التي سيبحث فيها البوت
 SOURCES = [
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/ar.m3u",
-    "https://raw.githubusercontent.com/mohammadreza-ertesh/TV-Channels/main/Arabic.m3u"
+    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/ar.m3u"
 ]
 
 def check_link(url):
-    """يختبر الرابط بسرعة قبل إضافته"""
+    """فحص سريع للتأكد من أن القناة تعمل"""
     try:
-        r = requests.head(url, timeout=3)
+        r = requests.get(url, timeout=5, stream=True)
         return r.status_code == 200
     except:
         return False
 
-def start_update():
+def run_bot():
     valid_channels = []
-    print("جاري جلب الروابط من GitHub...")
+    print("جاري جلب القنوات والبحث عن روابط شغالة...")
     
     for source in SOURCES:
         try:
             response = requests.get(source)
-            # استخراج الاسم والرابط
             matches = re.findall(r'#EXTINF:.*?,(.*?)\n(http.*?\.m3u8)', response.text)
             
             for name, url in matches:
-                url = url.strip()
-                # فحص أول 30 قناة لضمان السرعة وعدم فشل البوت
-                if len(valid_channels) < 30:
-                    if check_link(url):
+                # نكتفي بجلب أول 20 قناة شغالة لضمان سرعة البوت
+                if len(valid_channels) < 20:
+                    clean_url = url.strip()
+                    if check_link(clean_url):
                         valid_channels.append({
                             'id': len(valid_channels) + 1,
                             'title': name.strip(),
                             'image': 'https://via.placeholder.com/150?text=TV',
-                            'url': url
+                            'url': clean_url
                         })
-                        print(f"✅ تم إضافة: {name.strip()}")
+                        print(f"✅ تم العثور على قناة: {name.strip()}")
         except:
             continue
 
-    # حفظ النتائج في الجدول
+    # إعادة إنشاء ملف database.csv تلقائياً حتى لو كان محذوفاً
     with open('database.csv', 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['id', 'title', 'image', 'url'])
         writer.writeheader()
         writer.writerows(valid_channels)
+    print("✅ تم إنشاء وتحديث ملف database.csv بنجاح!")
 
 if __name__ == "__main__":
-    start_update()
+    run_bot()
