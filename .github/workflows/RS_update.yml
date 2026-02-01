@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # هذا السطر يحل مشكلة اللون الأحمر في صورتك
+      contents: write # ضروري للسماح للبوت بحفظ الملف
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python
@@ -18,7 +18,8 @@ jobs:
       - name: Install requests
         run: pip install requests
       - name: Run Update
-        run: python update_links.py
+        # قمت بتغيير الاسم هنا ليتطابق مع ملفك 'the_beast.py'
+        run: python the_beast.py 
       - name: Push back
         run: |
           git config --local user.name "GitHub Action"
