@@ -1,76 +1,83 @@
 import feedparser
 import csv
+import os
 import requests
 import re
-import os
+from typing import Dict
 
-# المصادر التي حددتها أنت
-RSS_SOURCES = [
+# المصادر التي حددتها
+SOURCES = [
     "https://nyaa.si/?page=rss",
     "https://www.tokyotosho.info/rss.php"
 ]
 DB_FILE = 'database.csv'
 
-def check_link_health(url):
-    """5 & 6: فحص الرابط وإذا كان معطلاً يرجح تحديثه"""
+def translate_to_arabic(text):
+    """ترجمة عناوين الأنمي إلى العربية باستخدام محرك ترجمة سريع"""
     try:
-        # فحص سريع للرابط
-        r = requests.head(url, timeout=5)
+        # استخدام API بسيط للترجمة (Google Translate Free API)
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ar&dt=t&q={requests.utils.quote(text)}"
+        res = requests.get(url, timeout=5)
+        return res.json()[0][0][0]
+    except:
+        return text # في حال فشل الترجمة يرجع النص الأصلي
+
+def check_torrent_health(url):
+    """5 & 6: فحص الرابط إذا كان يعمل"""
+    if url.startswith('magnet:'): return True
+    try:
+        r = requests.head(url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         return r.status_code < 400
     except:
         return False
 
-def get_embed_streaming(torrent_link):
-    """تحويل التورنت إلى رابط مشغل Embed حقيقي"""
-    # استخراج الـ Hash من الرابط (المعرف الفريد للفيديو)
-    info_hash = ""
-    if 'magnet:?' in torrent_link:
-        match = re.search(r'xt=urn:btih:([a-fA-F0-9]+)', torrent_link)
-        if match: info_hash = match.group(1)
-    
-    if info_hash:
-        # هذا الرابط يفتح "مشغل فيديو" (Player) مباشرة وليس صفحة بحث
-        return f"https://webtor.io/player/embed/{info_hash}"
-    return ""
-
-def update_db():
-    # 4: قراءة البيانات الموجودة مسبقاً للحفاظ عليها
+def start_bot():
+    # 4: الحفاظ على البيانات القديمة (تراكمي)
     database = {}
     if os.path.exists(DB_FILE):
-        with open(DB_FILE, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                database[row['name']] = row
+        try:
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    database[row['name_en']] = row
+        except: pass
 
-    print("🚀 جاري سحب الروابط من Nyaa و TokyoTosho...")
-    
-    for rss in RSS_SOURCES:
-        feed = feedparser.parse(rss)
-        for entry in feed.entries[:25]: # 3: سحب الجديد (25 حلقة من كل مصدر)
-            name = entry.title
-            torrent_link = entry.link
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    print("📡 جاري قنص وترجمة روابط التورنت...")
+
+    for rss_url in SOURCES:
+        try:
+            resp = requests.get(rss_url, headers=headers, timeout=15)
+            feed = feedparser.parse(resp.text)
             
-            # جلب رابط المشغل المباشر
-            player_url = get_embed_streaming(torrent_link)
-            
-            if player_url:
-                # 1 & 2: تنظيم الجدول بجودات متعددة واسم ورابط
-                # 6: تحديث الرابط إذا كان غير موجود أو معطل
-                if name not in database or not check_link_health(database[name]['url_1080p']):
-                    database[name] = {
-                        'name': name,
-                        'url_1080p': f"{player_url}?quality=1080",
-                        'url_720p': f"{player_url}?quality=720",
-                        'url_480p': f"{player_url}?quality=480"
+            for entry in feed.entries[:20]: # 3: سحب الجديد
+                name_en = entry.title
+                torrent_url = entry.link
+                
+                # منع التكرار وفحص الرابط
+                if name_en not in database or not check_torrent_health(database[name_en]['torrent_url']):
+                    print(f"🆕 معالجة: {name_en}")
+                    
+                    # ترجمة العنوان للعربية
+                    name_ar = translate_to_arabic(name_en)
+                    
+                    # 1 & 2: جدول بالاسم العربي، الإنجليزي، والرابط
+                    database[name_en] = {
+                        'name_ar': name_ar,
+                        'name_en': name_en,
+                        'torrent_url': torrent_url,
+                        'status': 'يعمل ✅'
                     }
+        except Exception as e:
+            print(f"❌ خطأ في المصدر: {e}")
 
-    # حفظ الجدول النهائي (القديم + الجديد)
+    # حفظ النتائج (القديم والجديد)
     with open(DB_FILE, 'w', newline='', encoding='utf-8') as f:
-        fieldnames = ['name', 'url_1080p', 'url_720p', 'url_480p']
+        fieldnames = ['name_ar', 'name_en', 'torrent_url', 'status']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(database.values())
-    print(f"✨ تم تحديث {len(database)} حلقة بنجاح!")
+    print(f"✨ تم التحديث! إجمالي العناصر المترجمة: {len(database)}")
 
 if __name__ == "__main__":
-    update_db()
+    start_bot()
